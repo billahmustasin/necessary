@@ -4,83 +4,43 @@ volumes:
   logs:
 
 services:
-  #
-  # Container to make fake logs
-  #
-  logs:
+  app:
+    image: app
+    container_name: java_app
+    ports:
+      - "8765:8765"
+
+  web:
+    build: ./angular-prometheus-exporter
+    container_name: web
+    image: web
+    ports:
+      - "80:80"
+  nginx-exporter:
+    image: "nginx/nginx-prometheus-exporter:latest"
+    command: ["-nginx.scrape-uri=http://web:80/metrics"]
+    ports:
+      - "9113:9113"
+        #  app:
+        #    build: .
+        #    volumes:
+        #    - .:/app
+        #    - ~/.m2:/root/.m2
+        #    working_dir: /app
+        #    command: bash -c "mvn clean package && java -jar target/healthcheck-prometheus-1.0-SNAPSHOT-jar-with-dependencies.jar"
+        #    ports:
+        #    - "8080:8080"
+        #    depends_on:
+        #    - mysqld
+  python-application:
     build:
-      context: docker/logs
-      dockerfile: "Dockerfile"
-    volumes:
-      - logs:/logs/
-    restart: "always"
+      context: ./python-application
+    container_name: python-application
+    image: python-application
+    ports:
+      - "81:5000"
 
-  #
-  # Tool container for importing/exporting dashboards.
-  #
-  tools:
-    build:
-      context: docker/tools
-      dockerfile: "Dockerfile"
-    volumes:
-      - .:/mnt
-      - logs:/logs/
-    restart: "always"
-
-  #
-  # Container to continuously ping hosts.
-  #
-  ping:
-    build:
-      context: docker/ping
-      dockerfile: "Dockerfile"
-    environment:
-      #
-      # Host to ping.  Can be hostname or IP.  Space-delimited.
-      # Note that DNS lookups may fail, so consider pinging some IPs...
-      #
-      HOSTS: "google.com amazon.com google-dns cloudflare-dns "
-      #
-      # Comment the previous line and uncomment this one if you'd like to ping 
-      # some hosts on different continents.
-      #
-      #HOSTS: "google.com amazon.com google-dns cloudflare-dns cheetah.jp leopard.se"
-    volumes:
-      - logs:/logs/
-      - ./hosts.txt:/etc/hosts
-    restart: "always"
-
-  #
-  # Get metrics from ping logs for Prometheus.
-  #
-  ping-metrics:
-    build:
-      context: docker/ping-metrics
-      dockerfile: "Dockerfile"
-    volumes:
-      - .:/mnt
-      - logs:/logs/
-    restart: "always"
-
-
-  #
-  # Container to read metrics from SEPTA Regional Rail.
-  #
-  septa:
-    build:
-      context: docker/septa
-      dockerfile: "Dockerfile"
-    volumes:
-      - .:/mnt
-      - logs:/logs/
-    restart: "always"
-
-
-  #
-  # Read logs from files and ingest into Loki.
-  #
   promtail:
-    #image: grafana/promtail:2.3.0
     image: grafana/promtail:latest
     volumes:
       - logs:/logs/
@@ -92,23 +52,9 @@ services:
       - "9081:9080"
     restart: "always"
 
-
-  #
-  # Telegraf reads system metrics, and will expose them to Prometheus and send them to Loki
-  #
-  telegraf:
-    image: telegraf:1.20
-    volumes:
-      - ./config/telegraf.conf:/etc/telegraf/telegraf.conf
-    restart: "always"
-
-
-  #
   # The Loki database for storing logs.
   #
   loki:
-    #image: grafana/loki:2.3.0
-    #image: grafana/loki:2.6.1
     image: grafana/loki:latest
     user: root
     volumes:
@@ -137,6 +83,9 @@ services:
       - ./data/prometheus:/prometheus
       - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
     restart: "always"
+    links:
+      - mysqld-exporter
+        #      - node_exporter
 
 
   #
@@ -150,7 +99,48 @@ services:
       - ./data/grafana:/var/lib/grafana
     ports:
       - "3000:3000"
+    environment:
+      - GF_AUTH_BASIC_ENABLED=false
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
     restart: "always"
 
+  mysqld:
+    image: mysql:5.7
+    container_name: mysqld
+    environment:
+      MYSQL_DATABASE: myDb
+      MYSQL_ROOT_PASSWORD: myRootPassword123
+      MYSQL_ROOT_HOST: '%'
+    volumes:
+      - ./mysql:/etc/mysql/conf.d
+      - ~/var/mysql:/var/lib/mysql
+    ports:
+      - 3306:3306
 
+  mysqld-exporter:
+    image: quay.io/prometheus/mysqld-exporter
+    container_name: mysqld-exporter
+    restart: unless-stopped
+    command:
+      - "--mysqld.username=root:myRootPassword123"
+      - "--mysqld.address=172.31.13.248:3306"
+    ports:
+      - 9104:9104
+    links:
+      - mysqld
+    depends_on:
+      - mysqld
 
+        #  node_exporter:
+        #    image: quay.io/prometheus/node-exporter
+        #    container_name: node_exporter
+        #    command: "--path.rootfs=/host"
+        #    pid: host
+        #    restart: "always"
+        #    volumes:
+        #      - /:/host:ro,rslave
+
+        #networks:
+        #default:
+        #driver: bridge
